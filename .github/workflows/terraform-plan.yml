@@ -1,7 +1,7 @@
 name: terraform plan
 on:
   push:
-    branches: [Develop]
+    branches: [main]
 jobs:
   terraform-plan:
     name: terraform plan

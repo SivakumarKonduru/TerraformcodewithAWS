@@ -23,20 +23,35 @@ jobs:
       - name: Setup Terraform
         uses: hashicorp/setup-terraform@v3
 
+      - name: Find directory of changed Terraform files
+        id: find-dir
+        run: |
+          # Find all .tf files changed in the latest commit
+          CHANGED_FILES=$(git diff-tree --no-commit-id --name-only -r ${{ github.sha }} | grep '\.tf$' || true)
+
+          # Extract unique directories (assumes each tf file is in its own customer dir)
+          DIRS=$(echo "$CHANGED_FILES" | xargs -n1 dirname | sort -u)
+
+          # For simplicity, assume just one directory was changed
+          DIR=$(echo "$DIRS" | head -n 1)
+
+          echo "Detected changed directory: $DIR"
+          echo "working_dir=$DIR" >> $GITHUB_OUTPUT
+
       - name: Terraform Init
         run: terraform init
-        working-directory: AWS-Infra/AWS-Env
+        working-directory: ${{ steps.find-dir.outputs.working_dir }}
 
       - name: Terraform Format Check
         run: terraform fmt -check
+        working-directory: ${{ steps.find-dir.outputs.working_dir }}
 
       - name: Terraform Plan (save to file)
         run: terraform plan > plan.txt
-        working-directory: AWS-Infra/AWS-Env
+        working-directory: ${{ steps.find-dir.outputs.working_dir }}
 
       - name: Upload readable plan
         uses: actions/upload-artifact@v4
         with:
           name: plan-text
-          path: AWS-Infra/AWS-Env/plan.txt
-
+          path: ${{ steps.find-dir.outputs.working_dir }}/plan.txt

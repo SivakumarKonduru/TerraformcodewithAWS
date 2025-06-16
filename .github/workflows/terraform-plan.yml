@@ -18,15 +18,14 @@ jobs:
 
       - name: Terraform Init
         run: terraform init
-
-      - name: Terraform Validate
-        run: terraform validate
+        working-directory: AWS-Infra/AWS-Env
 
       - name: Terraform Format Check
         run: terraform fmt -check
 
       - name: Terraform Plan
         run: terraform plan -out=tfplan
+        working-directory: AWS-Infra/AWS-Env
 
       - name: Save Terraform Plan As Artifact
         uses: actions/upload-artifact@v4

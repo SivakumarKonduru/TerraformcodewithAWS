@@ -2,6 +2,7 @@ provider "aws" {
   region = "us-east-1"
 }
 
+# Modules Section
 module "modules" {
   source = "../modules"
   ami_value = "ami-0616df5cb3508aa23" # replace this

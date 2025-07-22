@@ -1,57 +1,60 @@
-name: terraform plan
+name: Terraform Plan (Dynamic Recursive)
 
 on:
   push:
     branches: [main]
 
 jobs:
-  terraform-plan:
-    name: terraform plan
+  detect-changed-dirs:
     runs-on: ubuntu-latest
+    outputs:
+      matrix: ${{ steps.set-matrix.outputs.matrix }}
 
     steps:
-      - name: Checkout repository
+      - name: Checkout Code
         uses: actions/checkout@v3
 
-      - name: Configure AWS credentials
-        uses: aws-actions/configure-aws-credentials@v2
-        with:
-          aws-access-key-id: ${{ secrets.AWS_ACCESS_KEY_ID }}
-          aws-secret-access-key: ${{ secrets.AWS_SECRET_ACCESS_KEY }}
-          aws-region: ap-south-1  # change as needed
+      - name: Find All Changed Terraform Directories
+        id: set-matrix
+        run: |
+          echo "Detecting changed .tf file directories..."
+          changed_dirs=$(git diff --name-only ${{ github.event.before }} ${{ github.sha }} \
+            | grep '\.tf$' \
+            | xargs -n1 dirname \
+            | sort -u)
+
+          if [ -z "$changed_dirs" ]; then
+            echo "No changed Terraform directories."
+            echo 'matrix={"dir":[]}' >> $GITHUB_OUTPUT
+          else
+            matrix_json=$(echo "$changed_dirs" | jq -R . | jq -s .)
+            echo "matrix={\"dir\":$matrix_json}" >> $GITHUB_OUTPUT
+            echo "Found directories: $matrix_json"
+          fi
+
+  terraform-plan:
+    name: Terraform Plan
+    needs: detect-changed-dirs
+    if: needs.detect-changed-dirs.outputs.matrix != '{"dir":[]}'
+    runs-on: ubuntu-latest
+    strategy:
+      matrix: ${{ fromJson(needs.detect-changed-dirs.outputs.matrix) }}
+    defaults:
+      run:
+        working-directory: ${{ matrix.dir }}
+
+    steps:
+      - name: Checkout Code
+        uses: actions/checkout@v3
 
       - name: Setup Terraform
         uses: hashicorp/setup-terraform@v3
 
-      - name: Find directory of changed Terraform files
-        id: find-dir
-        run: |
-          # Find all .tf files changed in the latest commit
-          CHANGED_FILES=$(git diff-tree --no-commit-id --name-only -r ${{ github.sha }} | grep '\.tf$' || true)
-
-          # Extract unique directories (assumes each tf file is in its own customer dir)
-          DIRS=$(echo "$CHANGED_FILES" | xargs -n1 dirname | sort -u)
-
-          # For simplicity, assume just one directory was changed
-          DIR=$(echo "$DIRS" | head -n 1)
-
-          echo "Detected changed directory: $DIR"
-          echo "working_dir=$DIR" >> $GITHUB_OUTPUT
-
       - name: Terraform Init
         run: terraform init
-        working-directory: ${{ steps.find-dir.outputs.working_dir }}
 
-      - name: Terraform Format Check
-        run: terraform fmt -check
-        working-directory: ${{ steps.find-dir.outputs.working_dir }}
+      - name: Terraform Validate
+        run: terraform validate
 
-      - name: Terraform Plan (save to file)
-        run: terraform plan > plan.txt
-        working-directory: ${{ steps.find-dir.outputs.working_dir }}
-
-      - name: Upload readable plan
-        uses: actions/upload-artifact@v4
-        with:
-          name: plan-text
-          path: ${{ steps.find-dir.outputs.working_dir }}/plan.txt
+      - name: Terraform Plan
+        run: terraform plan

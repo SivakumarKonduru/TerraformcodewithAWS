@@ -6,6 +6,6 @@ provider "aws" {
 module "modules" {
   source = "../modules"
   ami_value = "ami-0616df5cb3508aa23" # replace this
-  instance_type_value = "t3.medium"
+  instance_type_value = "t3.micro"
   subnet_id_value = "subnet-0fc4e71d5d8e5205e" # replace this
 }

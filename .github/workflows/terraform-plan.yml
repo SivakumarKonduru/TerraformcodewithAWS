@@ -15,34 +15,38 @@ jobs:
       - name: Checkout code
         uses: actions/checkout@v4
 
+      - name: Set base commit
+        id: base
+        run: |
+          if [ "${{ github.event_name }}" = "pull_request" ]; then
+            echo "BASE=${{ github.event.pull_request.base.sha }}" >> $GITHUB_ENV
+          else
+            # fallback to 1 previous commit if `before` is empty
+            BASE=$(git rev-parse HEAD~1)
+            echo "BASE=$BASE" >> $GITHUB_ENV
+          fi
+
       - name: Find Changed Terraform Directories
         id: set-matrix
         run: |
           echo "Detecting changed .tf file directories..."
 
-          # List changed .tf files in this commit
-          CHANGED_DIRS=$(git diff --name-only ${{ github.event.before }} ${{ github.sha }} | grep '\.tf$' | xargs -n1 dirname | sort -u)
+          CHANGED_DIRS=$(git diff --name-only $BASE HEAD | grep '\.tf$' | xargs -n1 dirname | sort -u)
 
-          echo "Found changed directories:"
-          echo "$CHANGED_DIRS"
-
-          # Format for matrix
-          JSON_LIST=$(echo "$CHANGED_DIRS" | jq -R . | jq -s '{dir: .}')
-          
           if [ -z "$CHANGED_DIRS" ]; then
-            echo "No .tf file changes found. Setting dummy dir."
+            echo "No .tf file changes found. Using dummy."
             echo '{"dir":["terraform/dummy"]}' > dirs.json
           else
-            echo "$JSON_LIST" > dirs.json
+            echo "$CHANGED_DIRS" | jq -R . | jq -s '{dir: .}' > dirs.json
           fi
 
+          echo "Directories to run plan:"
           cat dirs.json
           echo "matrix=$(cat dirs.json)" >> $GITHUB_OUTPUT
 
   terraform-plan:
     needs: detect-changed-dirs
     runs-on: ubuntu-latest
-    if: needs.detect-changed-dirs.outputs.matrix != ''
     strategy:
       matrix: ${{ fromJson(needs.detect-changed-dirs.outputs.matrix) }}
     continue-on-error: true

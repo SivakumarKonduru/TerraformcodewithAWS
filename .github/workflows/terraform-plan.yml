@@ -3,7 +3,7 @@ name: Terraform Plan
 on:
   push:
     branches:
-      - main  # or your default branch
+      - main  # or your working branch
 
 jobs:
   detect-changed-dirs:
@@ -26,7 +26,7 @@ jobs:
 
           if [[ -z "$dirs" ]]; then
             echo "No .tf changes found. Using dummy fallback."
-            echo "matrix={\"dir\": [\"terraform/dummy\"]}" >> $GITHUB_OUTPUT
+            echo 'matrix={"dir": ["__no_changes__"]}' >> $GITHUB_OUTPUT
           else
             json=$(printf '%s\n' $dirs | jq -R . | jq -s '{dir: .}')
             echo "Found dirs: $json"
@@ -38,30 +38,29 @@ jobs:
     runs-on: ubuntu-latest
     strategy:
       matrix: ${{ fromJson(needs.detect-changed-dirs.outputs.matrix) }}
-    defaults:
-      run:
-        working-directory: ${{ matrix.dir }}
     steps:
-      - name: Skip dummy
-        if: ${{ matrix.dir == 'terraform/dummy' }}
-        run: echo "No Terraform changes to plan. Skipping."
-
       - name: Checkout code
-        if: ${{ matrix.dir != 'terraform/dummy' }}
         uses: actions/checkout@v3
 
+      - name: Skip - No changes to .tf files
+        if: ${{ matrix.dir == '__no_changes__' }}
+        run: echo "No Terraform changes detected. Skipping."
+
       - name: Setup Terraform
-        if: ${{ matrix.dir != 'terraform/dummy' }}
+        if: ${{ matrix.dir != '__no_changes__' }}
         uses: hashicorp/setup-terraform@v3
 
       - name: Terraform Init
-        if: ${{ matrix.dir != 'terraform/dummy' }}
+        if: ${{ matrix.dir != '__no_changes__' }}
         run: terraform init
+        working-directory: ${{ matrix.dir }}
 
       - name: Terraform Format Check
-        if: ${{ matrix.dir != 'terraform/dummy' }}
+        if: ${{ matrix.dir != '__no_changes__' }}
         run: terraform fmt -check
+        working-directory: ${{ matrix.dir }}
 
       - name: Terraform Plan
-        if: ${{ matrix.dir != 'terraform/dummy' }}
+        if: ${{ matrix.dir != '__no_changes__' }}
         run: terraform plan
+        working-directory: ${{ matrix.dir }}

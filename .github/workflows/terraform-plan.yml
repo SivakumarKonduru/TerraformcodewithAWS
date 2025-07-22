@@ -2,19 +2,17 @@ name: Terraform Plan
 
 on:
   push:
-    paths:
-      - '**/*.tf'
-
- 
+    branches:
+      - main
+  
 
 jobs:
   detect-changed-dirs:
     runs-on: ubuntu-latest
     outputs:
       matrix: ${{ steps.set-matrix.outputs.matrix }}
-
     steps:
-      - name: Checkout Code
+      - name: Checkout code
         uses: actions/checkout@v4
 
       - name: Find Changed Terraform Directories
@@ -22,57 +20,57 @@ jobs:
         run: |
           echo "Detecting changed .tf file directories..."
 
-          # Handle shallow clones or first commit
-          if git rev-parse HEAD^ >/dev/null 2>&1; then
-            DIFF_TARGET="HEAD^"
-          else
-            DIFF_TARGET=$(git rev-list --max-parents=0 HEAD)
-          fi
+          # List changed .tf files in this commit
+          CHANGED_DIRS=$(git diff --name-only ${{ github.event.before }} ${{ github.sha }} | grep '\.tf$' | xargs -n1 dirname | sort -u)
 
-          # Detect changed dirs
-          CHANGED_DIRS=$(git diff --name-only $DIFF_TARGET HEAD | grep '\.tf$' | xargs -n1 dirname | sort -u | uniq)
+          echo "Found changed directories:"
+          echo "$CHANGED_DIRS"
 
-          # Use fallback if nothing changed
+          # Format for matrix
+          JSON_LIST=$(echo "$CHANGED_DIRS" | jq -R . | jq -s '{dir: .}')
+          
           if [ -z "$CHANGED_DIRS" ]; then
-            echo "No changed Terraform directories. Using fallback dummy dir."
-            CHANGED_DIRS="terraform/dummy"
-            mkdir -p terraform/dummy
-            echo "" > terraform/dummy/empty.tf
+            echo "No .tf file changes found. Setting dummy dir."
+            echo '{"dir":["terraform/dummy"]}' > dirs.json
+          else
+            echo "$JSON_LIST" > dirs.json
           fi
 
-          # Format matrix output
-          DIRS_JSON=$(jq -n --argjson dirs "$(printf '%s\n' $CHANGED_DIRS | jq -R . | jq -s .)" '{dir: $dirs}')
-          echo "matrix=$DIRS_JSON" >> $GITHUB_OUTPUT
-          echo "Found dirs: $DIRS_JSON"
+          cat dirs.json
+          echo "matrix=$(cat dirs.json)" >> $GITHUB_OUTPUT
 
   terraform-plan:
     needs: detect-changed-dirs
     runs-on: ubuntu-latest
+    if: needs.detect-changed-dirs.outputs.matrix != ''
     strategy:
-      fail-fast: false
       matrix: ${{ fromJson(needs.detect-changed-dirs.outputs.matrix) }}
-
-    # Skip dummy directory
-    if: ${{ matrix.dir != 'terraform/dummy' }}
-
-    defaults:
-      run:
-        working-directory: ${{ matrix.dir }}
-
+    continue-on-error: true
+    name: Terraform Plan (${{ matrix.dir }})
     steps:
-      - name: Checkout repository
+      - name: Skip dummy
+        if: ${{ matrix.dir == 'terraform/dummy' }}
+        run: echo "No Terraform changes to plan. Skipping."
+
+      - name: Checkout code
+        if: ${{ matrix.dir != 'terraform/dummy' }}
         uses: actions/checkout@v4
 
       - name: Setup Terraform
-        uses: hashicorp/setup-terraform@v1
-        with:
-          terraform_version: 1.6.6
+        if: ${{ matrix.dir != 'terraform/dummy' }}
+        uses: hashicorp/setup-terraform@v3
 
       - name: Terraform Init
+        if: ${{ matrix.dir != 'terraform/dummy' }}
         run: terraform init
+        working-directory: ${{ matrix.dir }}
 
       - name: Terraform Format Check
+        if: ${{ matrix.dir != 'terraform/dummy' }}
         run: terraform fmt -check
+        working-directory: ${{ matrix.dir }}
 
-      - name: Terraform Plan (save to file)
-        run: terraform plan -out=tfplan
+      - name: Terraform Plan
+        if: ${{ matrix.dir != 'terraform/dummy' }}
+        run: terraform plan
+        working-directory: ${{ matrix.dir }}

@@ -1,50 +1,43 @@
-name: Terraform Plan (Dynamic Recursive)
+name: Terraform Plan
 
 on:
   push:
-    branches: [main]
+    branches:
+      - main
+  pull_request:
 
 jobs:
   detect-changed-dirs:
     runs-on: ubuntu-latest
     outputs:
       matrix: ${{ steps.set-matrix.outputs.matrix }}
-
     steps:
       - name: Checkout Code
         uses: actions/checkout@v3
 
-      - name: Find All Changed Terraform Directories
+      - name: Find Changed Terraform Directories
         id: set-matrix
         run: |
           echo "Detecting changed .tf file directories..."
-          changed_dirs=$(git diff --name-only ${{ github.event.before }} ${{ github.sha }} \
-            | grep '\.tf$' \
-            | xargs -n1 dirname \
-            | sort -u)
-
-          if [ -z "$changed_dirs" ]; then
-            echo "No changed Terraform directories."
-            echo 'matrix={"dir":[]}' >> $GITHUB_OUTPUT
-          else
-            matrix_json=$(echo "$changed_dirs" | jq -R . | jq -s .)
-            echo "matrix={\"dir\":$matrix_json}" >> $GITHUB_OUTPUT
-            echo "Found directories: $matrix_json"
-          fi
+          CHANGED_DIRS=$(git diff --name-only HEAD^ HEAD | grep '\.tf$' | xargs -n1 dirname | sort -u | uniq)
+          
+          DIRS_JSON=$(jq -n --argjson dirs "$(printf '%s\n' $CHANGED_DIRS | jq -R . | jq -s .)" '{dir: $dirs}')
+          
+          echo "matrix=$DIRS_JSON" >> $GITHUB_OUTPUT
+          echo "Found dirs: $DIRS_JSON"
 
   terraform-plan:
-    name: Terraform Plan
     needs: detect-changed-dirs
-    if: needs.detect-changed-dirs.outputs.matrix != '{"dir":[]}'
+    if: ${{ fromJson(needs.detect-changed-dirs.outputs.matrix).dir != '' }}
     runs-on: ubuntu-latest
     strategy:
+      fail-fast: false
       matrix: ${{ fromJson(needs.detect-changed-dirs.outputs.matrix) }}
     defaults:
       run:
         working-directory: ${{ matrix.dir }}
-
     steps:
-      - name: Checkout Code
+      - name: Checkout repository
         uses: actions/checkout@v3
 
       - name: Setup Terraform
@@ -53,8 +46,8 @@ jobs:
       - name: Terraform Init
         run: terraform init
 
-      - name: Terraform Validate
-        run: terraform validate
+      - name: Terraform Format Check
+        run: terraform fmt -check
 
       - name: Terraform Plan
         run: terraform plan

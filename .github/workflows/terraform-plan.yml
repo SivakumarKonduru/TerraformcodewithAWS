@@ -2,46 +2,70 @@ name: Terraform Plan
 
 on:
   push:
-    branches:
-      - main
-  pull_request:
+    paths:
+      - 'terraform/**.tf'
+ 
 
 jobs:
   detect-changed-dirs:
     runs-on: ubuntu-latest
     outputs:
       matrix: ${{ steps.set-matrix.outputs.matrix }}
+
     steps:
       - name: Checkout Code
-        uses: actions/checkout@v3
+        uses: actions/checkout@v4
 
       - name: Find Changed Terraform Directories
         id: set-matrix
         run: |
           echo "Detecting changed .tf file directories..."
-          CHANGED_DIRS=$(git diff --name-only HEAD^ HEAD | grep '\.tf$' | xargs -n1 dirname | sort -u | uniq)
-          
+
+          # Handle shallow clones or first commit
+          if git rev-parse HEAD^ >/dev/null 2>&1; then
+            DIFF_TARGET="HEAD^"
+          else
+            DIFF_TARGET=$(git rev-list --max-parents=0 HEAD)
+          fi
+
+          # Detect changed dirs
+          CHANGED_DIRS=$(git diff --name-only $DIFF_TARGET HEAD | grep '\.tf$' | xargs -n1 dirname | sort -u | uniq)
+
+          # Use fallback if nothing changed
+          if [ -z "$CHANGED_DIRS" ]; then
+            echo "No changed Terraform directories. Using fallback dummy dir."
+            CHANGED_DIRS="terraform/dummy"
+            mkdir -p terraform/dummy
+            echo "" > terraform/dummy/empty.tf
+          fi
+
+          # Format matrix output
           DIRS_JSON=$(jq -n --argjson dirs "$(printf '%s\n' $CHANGED_DIRS | jq -R . | jq -s .)" '{dir: $dirs}')
-          
           echo "matrix=$DIRS_JSON" >> $GITHUB_OUTPUT
           echo "Found dirs: $DIRS_JSON"
 
   terraform-plan:
     needs: detect-changed-dirs
-    if: ${{ fromJson(needs.detect-changed-dirs.outputs.matrix).dir != '' }}
     runs-on: ubuntu-latest
     strategy:
       fail-fast: false
       matrix: ${{ fromJson(needs.detect-changed-dirs.outputs.matrix) }}
+
+    # Skip dummy directory
+    if: ${{ matrix.dir != 'terraform/dummy' }}
+
     defaults:
       run:
         working-directory: ${{ matrix.dir }}
+
     steps:
       - name: Checkout repository
-        uses: actions/checkout@v3
+        uses: actions/checkout@v4
 
       - name: Setup Terraform
-        uses: hashicorp/setup-terraform@v3
+        uses: hashicorp/setup-terraform@v1
+        with:
+          terraform_version: 1.6.6
 
       - name: Terraform Init
         run: terraform init
@@ -49,5 +73,5 @@ jobs:
       - name: Terraform Format Check
         run: terraform fmt -check
 
-      - name: Terraform Plan
-        run: terraform plan
+      - name: Terraform Plan (save to file)
+        run: terraform plan -out=tfplan

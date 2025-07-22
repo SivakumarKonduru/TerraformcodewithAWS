@@ -1,9 +1,10 @@
-name: Terraform Plan
+name: terraform-plan
 
 on:
   push:
     branches:
-      - main  # or your working branch
+      - main
+      - '**' # Optional: run on all branches
 
 jobs:
   detect-changed-dirs:
@@ -12,17 +13,16 @@ jobs:
       matrix: ${{ steps.set-matrix.outputs.matrix }}
     steps:
       - name: Checkout Code
-        uses: actions/checkout@v3
-
-      - name: Set base commit
-        id: base
-        run: echo "BASE=$(git rev-parse HEAD^1)" >> $GITHUB_ENV
+        uses: actions/checkout@v4
 
       - name: Find Changed Terraform Directories
         id: set-matrix
         run: |
           echo "Detecting changed .tf file directories..."
-          dirs=$(git diff --name-only $BASE HEAD | grep '\.tf$' | xargs -n1 dirname | sort -u)
+
+          git fetch origin ${{ github.event.before }}
+
+          dirs=$(git diff --name-only ${{ github.event.before }} ${{ github.sha }} | grep '\.tf$' | xargs -n1 dirname | sort -u)
 
           if [[ -z "$dirs" ]]; then
             echo "No .tf changes found. Using dummy fallback."
@@ -37,10 +37,14 @@ jobs:
     needs: detect-changed-dirs
     runs-on: ubuntu-latest
     strategy:
-      matrix: ${{ fromJson(needs.detect-changed-dirs.outputs.matrix) }}
+      matrix: ${{fromJson(needs.detect-changed-dirs.outputs.matrix)}}
+    defaults:
+      run:
+        working-directory: ${{ matrix.dir }}
+
     steps:
       - name: Checkout code
-        uses: actions/checkout@v3
+        uses: actions/checkout@v4
 
       - name: Skip - No changes to .tf files
         if: ${{ matrix.dir == '__no_changes__' }}
@@ -49,18 +53,17 @@ jobs:
       - name: Setup Terraform
         if: ${{ matrix.dir != '__no_changes__' }}
         uses: hashicorp/setup-terraform@v3
+        with:
+          terraform_version: 1.6.6
 
       - name: Terraform Init
         if: ${{ matrix.dir != '__no_changes__' }}
-        run: terraform init
-        working-directory: ${{ matrix.dir }}
+        run: terraform init -input=false
 
       - name: Terraform Format Check
         if: ${{ matrix.dir != '__no_changes__' }}
         run: terraform fmt -check
-        working-directory: ${{ matrix.dir }}
 
       - name: Terraform Plan
         if: ${{ matrix.dir != '__no_changes__' }}
-        run: terraform plan
-        working-directory: ${{ matrix.dir }}
+        run: terraform plan -input=false -no-color

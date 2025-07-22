@@ -3,7 +3,8 @@ name: Terraform Plan
 on:
   push:
     paths:
-      - 'terraform/**.tf'
+      - '**/*.tf'
+
  
 
 jobs:

@@ -1,13 +1,9 @@
 name: Terraform Plan
 
 on:
-  push: 
-     branches:
-      - main
-     paths:
-      - '**.tf'
-      
-      
+  push:
+    branches:
+      - main  # or your default branch
 
 jobs:
   detect-changed-dirs:
@@ -17,30 +13,25 @@ jobs:
     steps:
       - name: Checkout Code
         uses: actions/checkout@v3
-        with:
-          fetch-depth: 2  # Allows comparison with previous commit
 
       - name: Set base commit
-        id: set-base
-        run: |
-          if git rev-parse HEAD~1 >/dev/null 2>&1; then
-            echo "BASE=$(git rev-parse HEAD~1)" >> $GITHUB_ENV
-          else
-            echo "BASE=$(git rev-parse HEAD)" >> $GITHUB_ENV
-          fi
+        id: base
+        run: echo "BASE=$(git rev-parse HEAD^1)" >> $GITHUB_ENV
 
       - name: Find Changed Terraform Directories
         id: set-matrix
         run: |
           echo "Detecting changed .tf file directories..."
-          dirs=$(git diff --name-only $BASE HEAD | grep '\.tf$' | xargs -n1 dirname | sort -u | jq -R . | jq -s .)
-          if [[ "$dirs" == "[]" ]]; then
-            # Fallback dummy to avoid matrix error
-            echo "No changed .tf directories. Setting dummy path."
-            dirs='["terraform/dummy"]'
+          dirs=$(git diff --name-only $BASE HEAD | grep '\.tf$' | xargs -n1 dirname | sort -u)
+
+          if [[ -z "$dirs" ]]; then
+            echo "No .tf changes found. Using dummy fallback."
+            echo "matrix={\"dir\": [\"terraform/dummy\"]}" >> $GITHUB_OUTPUT
+          else
+            json=$(printf '%s\n' $dirs | jq -R . | jq -s '{dir: .}')
+            echo "Found dirs: $json"
+            echo "matrix=$json" >> $GITHUB_OUTPUT
           fi
-          echo "Found dirs: $dirs"
-          echo "matrix={\"dir\": $dirs}" >> $GITHUB_OUTPUT
 
   terraform-plan:
     needs: detect-changed-dirs
@@ -62,8 +53,6 @@ jobs:
       - name: Setup Terraform
         if: ${{ matrix.dir != 'terraform/dummy' }}
         uses: hashicorp/setup-terraform@v3
-        with:
-          terraform_version: 1.6.6
 
       - name: Terraform Init
         if: ${{ matrix.dir != 'terraform/dummy' }}

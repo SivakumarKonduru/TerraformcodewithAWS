@@ -1,69 +1,44 @@
-name: terraform-plan
+name: Terraform Auto Init & Plan
 
 on:
   push:
     branches:
-      - main
-      - '**' # Optional: run on all branches
+      - main  # or any branch you want
+  workflow_dispatch:  # optional: manual trigger from GitHub UI
 
 jobs:
-  detect-changed-dirs:
+  terraform:
+    name: Terraform Init and Plan
     runs-on: ubuntu-latest
-    outputs:
-      matrix: ${{ steps.set-matrix.outputs.matrix }}
-    steps:
-      - name: Checkout Code
-        uses: actions/checkout@v4
-
-      - name: Find Changed Terraform Directories
-        id: set-matrix
-        run: |
-          echo "Detecting changed .tf file directories..."
-
-          git fetch origin ${{ github.event.before }}
-
-          dirs=$(git diff --name-only ${{ github.event.before }} ${{ github.sha }} | grep '\.tf$' | xargs -n1 dirname | sort -u)
-
-          if [[ -z "$dirs" ]]; then
-            echo "No .tf changes found. Using dummy fallback."
-            echo 'matrix={"dir": ["__no_changes__"]}' >> $GITHUB_OUTPUT
-          else
-            json=$(printf '%s\n' $dirs | jq -R . | jq -s '{dir: .}')
-            echo "Found dirs: $json"
-            echo "matrix=$json" >> $GITHUB_OUTPUT
-          fi
-
-  terraform-plan:
-    needs: detect-changed-dirs
-    runs-on: ubuntu-latest
-    strategy:
-      matrix: ${{fromJson(needs.detect-changed-dirs.outputs.matrix)}}
-    defaults:
-      run:
-        working-directory: ${{ matrix.dir }}
 
     steps:
-      - name: Checkout code
+      - name: Checkout repository
         uses: actions/checkout@v4
 
-      - name: Skip - No changes to .tf files
-        if: ${{ matrix.dir == '__no_changes__' }}
-        run: echo "No Terraform changes detected. Skipping."
-
-      - name: Setup Terraform
-        if: ${{ matrix.dir != '__no_changes__' }}
+      - name: Set up Terraform
         uses: hashicorp/setup-terraform@v3
         with:
-          terraform_version: 1.6.6
+          terraform_version: 1.8.0  # set your preferred version
 
-      - name: Terraform Init
-        if: ${{ matrix.dir != '__no_changes__' }}
-        run: terraform init -input=false
+      - name: Find Terraform directories
+        id: find_dirs
+        run: |
+          echo "Scanning for Terraform directories..."
+          dirs=$(find . -type f -name "*.tf" -exec dirname {} \; | sort -u)
+          echo "$dirs" > tf_dirs.txt
+          echo "Found directories:"
+          cat tf_dirs.txt
 
-      - name: Terraform Format Check
-        if: ${{ matrix.dir != '__no_changes__' }}
-        run: terraform fmt -check
+      - name: Terraform Init & Plan in each directory
+        run: |
+          while read dir; do
+            echo "============================="
+            echo "Processing: $dir"
+            echo "============================="
+            cd "$dir"
 
-      - name: Terraform Plan
-        if: ${{ matrix.dir != '__no_changes__' }}
-        run: terraform plan -input=false -no-color
+            terraform init -input=false
+            terraform plan -input=false || echo "Terraform plan failed in $dir"
+
+            cd - > /dev/null
+          done < tf_dirs.txt

@@ -1,4 +1,4 @@
-name: Terraform Init & Plan (Always Run)
+name: Terraform Plan (Only on Changed .tf Files)
 
 on:
   push:
@@ -8,11 +8,9 @@ on:
 
 jobs:
   terraform:
-    name: Terraform Init & Plan
     runs-on: ubuntu-latest
-
     steps:
-      - name: Checkout repository
+      - name: Checkout code
         uses: actions/checkout@v4
       - name: Configure AWS credentials
         uses: aws-actions/configure-aws-credentials@v2
@@ -21,23 +19,40 @@ jobs:
           aws-access-key-id: ${{ secrets.AWS_ACCESS_KEY_ID }}
           aws-secret-access-key: ${{ secrets.AWS_SECRET_ACCESS_KEY }}
           aws-region: ap-south-1  # change as needed
-
+ 
+        with:
+          fetch-depth: 0  # IMPORTANT: ensures full history so git diff works
 
       - name: Set up Terraform
         uses: hashicorp/setup-terraform@v3
         with:
-          terraform_version: 1.8.0  # or your required version
+          terraform_version: 1.8.0
 
-      - name: Find all Terraform directories
-        id: find_dirs
+      - name: Get changed .tf directories
+        id: tfdirs
         run: |
-          echo "Searching for all directories with .tf files..."
-          find . -type f -name "*.tf" -exec dirname {} \; | sort -u > tf_dirs.txt
-          echo "Terraform directories found:"
-          cat tf_dirs.txt
+          echo "Finding changed .tf files..."
 
-      - name: Run Terraform Init & Plan in all directories
+          # Get previous commit (safe even on first commit)
+          base_ref=$(git rev-parse HEAD^ || echo "")
+          if [ -z "$base_ref" ]; then
+            echo "First commit — running plan for all .tf files."
+            find . -type f -name "*.tf" -exec dirname {} \; | sort -u > changed_tf_dirs.txt
+          else
+            git diff --name-only $base_ref HEAD | grep '\.tf$' | xargs -r -n1 dirname | sort -u > changed_tf_dirs.txt
+          fi
+
+          echo "Changed .tf directories:"
+          cat changed_tf_dirs.txt || echo "None"
+
+      - name: Run Terraform Init & Plan in Changed Directories
+        if: success()
         run: |
+          if [ ! -s changed_tf_dirs.txt ]; then
+            echo "No changed Terraform directories found."
+            exit 0
+          fi
+
           while read dir; do
             echo "============================="
             echo "Processing: $dir"
@@ -48,4 +63,4 @@ jobs:
             terraform plan -input=false || echo "Terraform plan failed in $dir"
 
             cd - > /dev/null
-          done < tf_dirs.txt
+          done < changed_tf_dirs.txt

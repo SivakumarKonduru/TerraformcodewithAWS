@@ -1,4 +1,4 @@
-name: Terraform Plan (Only on Changed Directories)
+name: Terraform Init & Plan (Always Run)
 
 on:
   push:
@@ -8,7 +8,7 @@ on:
 
 jobs:
   terraform:
-    name: Terraform Changed Directories
+    name: Terraform Init & Plan
     runs-on: ubuntu-latest
 
     steps:
@@ -23,31 +23,20 @@ jobs:
           aws-region: ap-south-1  # change as needed
 
 
-
       - name: Set up Terraform
         uses: hashicorp/setup-terraform@v3
         with:
-          terraform_version: 1.8.0
+          terraform_version: 1.8.0  # or your required version
 
-      - name: Get changed directories with .tf files
-        id: changes
+      - name: Find all Terraform directories
+        id: find_dirs
         run: |
-          echo "Finding changed .tf files..."
-          changed_dirs=$(git diff --name-only ${{ github.event.before }} ${{ github.sha }} | grep '\.tf$' | xargs -r -n1 dirname | sort -u)
-          
-          if [ -z "$changed_dirs" ]; then
-            echo "No Terraform file changes detected."
-            echo "changed_dirs=" >> "$GITHUB_ENV"
-            exit 0
-          fi
+          echo "Searching for all directories with .tf files..."
+          find . -type f -name "*.tf" -exec dirname {} \; | sort -u > tf_dirs.txt
+          echo "Terraform directories found:"
+          cat tf_dirs.txt
 
-          echo "$changed_dirs" > changed_tf_dirs.txt
-          echo "Changed directories with .tf files:"
-          cat changed_tf_dirs.txt
-          echo "changed_dirs=$(cat changed_tf_dirs.txt | paste -sd "," -)" >> "$GITHUB_ENV"
-
-      - name: Terraform Init & Plan in Changed Directories
-        if: env.changed_dirs != ''
+      - name: Run Terraform Init & Plan in all directories
         run: |
           while read dir; do
             echo "============================="
@@ -59,4 +48,4 @@ jobs:
             terraform plan -input=false || echo "Terraform plan failed in $dir"
 
             cd - > /dev/null
-          done < changed_tf_dirs.txt
+          done < tf_dirs.txt

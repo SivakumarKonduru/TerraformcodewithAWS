@@ -1,4 +1,4 @@
-name: Terraform Init & Plan (Changed Directories Only)
+name: Terraform Init, Plan & Manual Apply (Changed Directories Only)
 
 on:
   push:
@@ -8,23 +8,24 @@ on:
 
 jobs:
   terraform:
-    name: Terraform Init & Plan
+    name: Terraform - Init & Plan
     runs-on: ubuntu-latest
+
+    outputs:
+      dirs_changed: ${{ steps.find_dirs.outputs.dirs_changed }}
 
     steps:
       - name: Checkout repository
         uses: actions/checkout@v4
         with:
-          fetch-depth: 0  # Ensures git history is available for diff
+          fetch-depth: 0
 
       - name: Configure AWS credentials
         uses: aws-actions/configure-aws-credentials@v2
-
         with:
           aws-access-key-id: ${{ secrets.AWS_ACCESS_KEY_ID }}
           aws-secret-access-key: ${{ secrets.AWS_SECRET_ACCESS_KEY }}
-          aws-region: ap-south-1  # change as needed
-
+          aws-region: ap-south-1
 
       - name: Set up Terraform
         uses: hashicorp/setup-terraform@v3
@@ -36,7 +37,6 @@ jobs:
         run: |
           echo "Searching for changed directories with .tf files..."
 
-          # Get previous commit SHA, fallback for first commit
           base_ref=$(git rev-parse HEAD^ || echo "")
           if [ -z "$base_ref" ]; then
             echo "First commit, scanning all .tf directories"
@@ -45,24 +45,80 @@ jobs:
             git diff --name-only $base_ref HEAD | grep '\.tf$' | xargs -r -n1 dirname | sort -u > tf_dirs.txt
           fi
 
-          echo "Terraform directories to process:"
-          cat tf_dirs.txt || echo "None"
+          echo "Changed directories:"
+          cat tf_dirs.txt
 
-      - name: Run Terraform Init & Plan in changed directories
+          # Output directories as comma-separated string
+          echo "dirs_changed=$(paste -sd ',' tf_dirs.txt)" >> $GITHUB_OUTPUT
+
+      - name: Run Terraform Init
+        if: success()
         run: |
           if [ ! -s tf_dirs.txt ]; then
-            echo "No changed Terraform directories found. Skipping."
+            echo "No directories changed."
             exit 0
           fi
 
           while read dir; do
-            echo "============================="
-            echo "Processing: $dir"
-            echo "============================="
+            echo "Initializing: $dir"
             cd "$dir"
-
             terraform init -input=false
-            terraform plan -input=false || echo "Terraform plan failed in $dir"
+            cd - > /dev/null
+          done < tf_dirs.txt
 
+      - name: Run Terraform Plan
+        if: success()
+        run: |
+          while read dir; do
+            echo "Planning: $dir"
+            cd "$dir"
+            terraform plan -input=false || echo "Terraform plan failed in $dir"
+            cd - > /dev/null
+          done < tf_dirs.txt
+
+  apply:
+    name: Terraform Apply (Manual Approval)
+    runs-on: ubuntu-latest
+    needs: terraform
+    environment:
+      name: terraform-prod
+      # In GitHub Settings > Environments, set this to require manual approval
+
+    steps:
+      - name: Checkout repository
+        uses: actions/checkout@v4
+
+      - name: Configure AWS credentials
+        uses: aws-actions/configure-aws-credentials@v2
+        with:
+          aws-access-key-id: ${{ secrets.AWS_ACCESS_KEY_ID }}
+          aws-secret-access-key: ${{ secrets.AWS_SECRET_ACCESS_KEY }}
+          aws-region: ap-south-1
+
+      - name: Set up Terraform
+        uses: hashicorp/setup-terraform@v3
+        with:
+          terraform_version: 1.8.0
+
+      - name: Recalculate changed directories
+        run: |
+          base_ref=$(git rev-parse HEAD^ || echo "")
+          if [ -z "$base_ref" ]; then
+            find . -type f -name "*.tf" -exec dirname {} \; | sort -u > tf_dirs.txt
+          else
+            git diff --name-only $base_ref HEAD | grep '\.tf$' | xargs -r -n1 dirname | sort -u > tf_dirs.txt
+          fi
+
+      - name: Terraform Apply (Manual)
+        run: |
+          if [ ! -s tf_dirs.txt ]; then
+            echo "No changed Terraform directories found. Skipping apply."
+            exit 0
+          fi
+
+          while read dir; do
+            echo "Applying: $dir"
+            cd "$dir"
+            terraform apply -auto-approve || echo "Terraform apply failed in $dir"
             cd - > /dev/null
           done < tf_dirs.txt

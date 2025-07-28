@@ -81,7 +81,7 @@ jobs:
     runs-on: ubuntu-latest
 
     environment:
-      name: production
+      name: terraform-prod
       url: https://example.com
     concurrency:
       group: terraform-apply
@@ -121,8 +121,9 @@ jobs:
             exit 0
           fi
           while read dir; do
-            echo "Applying Terraform in $dir"
+            echo "Running terraform init and apply in $dir"
             cd "$dir"
+            terraform init -input=false
             terraform apply -auto-approve || echo "Terraform apply failed in $dir"
             cd - > /dev/null
           done < tf_dirs.txt

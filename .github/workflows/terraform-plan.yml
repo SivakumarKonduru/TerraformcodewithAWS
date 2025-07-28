@@ -1,4 +1,4 @@
-name: Terraform Init, Plan & Manual Apply (Changed Directories Only)
+name: Terraform Init, Plan & Apply (Changed Directories Only)
 
 on:
   push:
@@ -7,18 +7,15 @@ on:
   workflow_dispatch:
 
 jobs:
-  terraform:
+  terraform-init-plan:
     name: Terraform - Init & Plan
     runs-on: ubuntu-latest
-
-    outputs:
-      dirs_changed: ${{ steps.find_dirs.outputs.dirs_changed }}
 
     steps:
       - name: Checkout repository
         uses: actions/checkout@v4
         with:
-          fetch-depth: 0
+          fetch-depth: 0  # required to compare commits
 
       - name: Configure AWS credentials
         uses: aws-actions/configure-aws-credentials@v2
@@ -36,7 +33,6 @@ jobs:
         id: find_dirs
         run: |
           echo "Searching for changed directories with .tf files..."
-
           base_ref=$(git rev-parse HEAD^ || echo "")
           if [ -z "$base_ref" ]; then
             echo "First commit, scanning all .tf directories"
@@ -44,47 +40,60 @@ jobs:
           else
             git diff --name-only $base_ref HEAD | grep '\.tf$' | xargs -r -n1 dirname | sort -u > tf_dirs.txt
           fi
+          echo "Terraform directories to process:"
+          cat tf_dirs.txt || echo "None"
 
-          echo "Changed directories:"
-          cat tf_dirs.txt
-
-          # Output directories as comma-separated string
-          echo "dirs_changed=$(paste -sd ',' tf_dirs.txt)" >> $GITHUB_OUTPUT
-
-      - name: Run Terraform Init
-        if: success()
+      - name: Terraform Init
         run: |
           if [ ! -s tf_dirs.txt ]; then
-            echo "No directories changed."
+            echo "No changed Terraform directories found. Skipping init."
             exit 0
           fi
-
           while read dir; do
-            echo "Initializing: $dir"
+            echo "Running terraform init in $dir"
             cd "$dir"
             terraform init -input=false
             cd - > /dev/null
           done < tf_dirs.txt
 
-      - name: Run Terraform Plan
-        if: success()
+      - name: Terraform Plan
         run: |
+          if [ ! -s tf_dirs.txt ]; then
+            echo "No changed Terraform directories found. Skipping plan."
+            exit 0
+          fi
           while read dir; do
-            echo "Planning: $dir"
+            echo "Running terraform plan in $dir"
             cd "$dir"
             terraform plan -input=false || echo "Terraform plan failed in $dir"
             cd - > /dev/null
           done < tf_dirs.txt
 
-  apply:
+      - name: Upload changed directories file
+        uses: actions/upload-artifact@v4
+        with:
+          name: tf-dirs
+          path: tf_dirs.txt
+
+  terraform-apply:
     name: Terraform Apply (Manual Approval)
+    needs: terraform-init-plan
     runs-on: ubuntu-latest
-    needs: terraform
+
     environment:
-      name: terraform-prod
-      # In GitHub Settings > Environments, set this to require manual approval
+      name: production
+      url: https://example.com
+    concurrency:
+      group: terraform-apply
+      cancel-in-progress: false
 
     steps:
+      - name: Wait for approval
+        uses: hmarr/auto-approve-action@v3
+        if: github.event_name == 'workflow_dispatch'
+        with:
+          github-token: ${{ secrets.GITHUB_TOKEN }}
+
       - name: Checkout repository
         uses: actions/checkout@v4
 
@@ -100,14 +109,10 @@ jobs:
         with:
           terraform_version: 1.8.0
 
-      - name: Recalculate changed directories
-        run: |
-          base_ref=$(git rev-parse HEAD^ || echo "")
-          if [ -z "$base_ref" ]; then
-            find . -type f -name "*.tf" -exec dirname {} \; | sort -u > tf_dirs.txt
-          else
-            git diff --name-only $base_ref HEAD | grep '\.tf$' | xargs -r -n1 dirname | sort -u > tf_dirs.txt
-          fi
+      - name: Download changed directories file
+        uses: actions/download-artifact@v4
+        with:
+          name: tf-dirs
 
       - name: Terraform Apply (Manual)
         run: |
@@ -115,9 +120,8 @@ jobs:
             echo "No changed Terraform directories found. Skipping apply."
             exit 0
           fi
-
           while read dir; do
-            echo "Applying: $dir"
+            echo "Applying Terraform in $dir"
             cd "$dir"
             terraform apply -auto-approve || echo "Terraform apply failed in $dir"
             cd - > /dev/null

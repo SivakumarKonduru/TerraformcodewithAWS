@@ -5,13 +5,12 @@ on:
     branches:
       - main
   workflow_dispatch:
-env:
-      name: terraform-prod
 
+# Environment and permissions defined here (no need to pre-create in UI)
 permissions:
-      contents: read
-      id-token: write
-      issues: write
+  contents: read
+  id-token: write
+  issues: write
 
 jobs:
   terraform-init-plan:
@@ -82,42 +81,64 @@ jobs:
           name: tf-dirs
           path: tf_dirs.txt
 
-  terraform-apply:
-    name: Terraform Apply (Manual Approval)
+  manual-approval:
+    name: Manual Approval Before Apply
     needs: terraform-init-plan
     runs-on: ubuntu-latest
-
+    permissions:
+      issues: write
     steps:
-      - name: Manual Approval
+      - name: Request manual approval
         uses: trstringer/manual-approval@v1
         with:
-          secret: ${{github.TOKEN }}
-          approvers: SivaKumarKonduru  # ✅ GitHub usernames
+          approvers: your-lead-username,your-username   # ✅ List of approvers
           minimum-approvals: 1
           issue-title: "Terraform Apply Approval Required"
           issue-body: "Please review the Terraform plan output and approve to proceed with apply."
-          exclude-workflow-initiator-as-approver: false
 
+  terraform-apply:
+    name: Terraform Apply
+    needs: manual-approval
+    runs-on: ubuntu-latest
+
+    environment:
+      name: terraform-prod
+      url: https://example.com
+    concurrency:
+      group: terraform-apply
+      cancel-in-progress: false
+
+    steps:
       - name: Checkout repository
         uses: actions/checkout@v4
 
+      - name: Configure AWS credentials
+        uses: aws-actions/configure-aws-credentials@v2
+        with:
+          aws-access-key-id: ${{ secrets.AWS_ACCESS_KEY_ID }}
+          aws-secret-access-key: ${{ secrets.AWS_SECRET_ACCESS_KEY }}
+          aws-region: ap-south-1
+
       - name: Set up Terraform
         uses: hashicorp/setup-terraform@v3
+        with:
+          terraform_version: 1.8.0
 
       - name: Download changed directories file
         uses: actions/download-artifact@v4
         with:
           name: tf-dirs
 
-      - name: Terraform Apply (Manual)
+      - name: Terraform Apply
         run: |
           if [ ! -s tf_dirs.txt ]; then
             echo "No changed Terraform directories found. Skipping apply."
             exit 0
           fi
           while read dir; do
-            echo "Applying Terraform in $dir"
+            echo "Running terraform init and apply in $dir"
             cd "$dir"
+            terraform init -input=false
             terraform apply -auto-approve || echo "Terraform apply failed in $dir"
             cd - > /dev/null
           done < tf_dirs.txt

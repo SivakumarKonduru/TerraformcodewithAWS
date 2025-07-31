@@ -91,7 +91,7 @@ jobs:
       - name: Request manual approval
         uses: trstringer/manual-approval@v1
         with:
-          approvers: your-lead-username,your-username   # ✅ List of approvers
+          approvers: SivaKumarKonduru   # ✅ List of approvers
           minimum-approvals: 1
           issue-title: "Terraform Apply Approval Required"
           issue-body: "Please review the Terraform plan output and approve to proceed with apply."

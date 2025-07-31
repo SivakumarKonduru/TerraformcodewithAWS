@@ -10,17 +10,52 @@ permissions:
   contents: read
   id-token: write
   issues: write
+  Environments: write
+
+env:
+  REVIEWER_USERNAMES: "SivaKumarKonduru"  # 👈 Add required GitHub usernames here
+  ENV_NAME: "terraform-prod"
 
 jobs:
+  create-environment:
+    name: Create/Update Environment with Required Reviewers
+    runs-on: ubuntu-latest
+    steps:
+      - name: Get User IDs for Reviewers
+        id: get_ids
+        run: |
+          reviewers_json="[]"
+          IFS=',' read -ra USERS <<< "${REVIEWER_USERNAMES}"
+          for user in "${USERS[@]}"; do
+            echo "Fetching ID for $user"
+            user_data=$(curl -s -H "Authorization: Bearer ${{ secrets.GITHUB_TOKEN }}" \
+              -H "Accept: application/vnd.github+json" \
+              https://api.github.com/users/$user)
+            user_id=$(echo "$user_data" | jq '.id')
+            reviewers_json=$(echo "$reviewers_json" | jq ". + [{\"type\": \"User\", \"id\": $user_id}]")
+          done
+          echo "reviewers=$reviewers_json" >> $GITHUB_OUTPUT
+
+      - name: Create/Update Environment
+        run: |
+          curl -s -X PUT \
+            -H "Accept: application/vnd.github+json" \
+            -H "Authorization: Bearer ${{ secrets.GITHUB_TOKEN }}" \
+            https://api.github.com/repos/${{ github.repository }}/environments/${ENV_NAME} \
+            -d "{
+              \"wait_timer\": 0,
+              \"reviewers\": ${{ steps.get_ids.outputs.reviewers }}
+            }"
+
   terraform-init-plan:
     name: Terraform - Init & Plan
+    needs: create-environment
     runs-on: ubuntu-latest
-
     steps:
       - name: Checkout repository
         uses: actions/checkout@v4
         with:
-          fetch-depth: 0  # required to compare commits
+          fetch-depth: 0
 
       - name: Configure AWS credentials
         uses: aws-actions/configure-aws-credentials@v2
@@ -84,16 +119,11 @@ jobs:
     name: Terraform Apply (Requires Approval)
     needs: terraform-init-plan
     runs-on: ubuntu-latest
-
-    # 👇 Built-in approval using GitHub Environments
     environment:
       name: terraform-prod
-      url: https://example.com
-
     concurrency:
       group: terraform-apply
       cancel-in-progress: false
-
     steps:
       - name: Checkout repository
         uses: actions/checkout@v4
@@ -115,7 +145,7 @@ jobs:
         with:
           name: tf-dirs
 
-      - name: Terraform Apply
+      - name: Terraform Apply (Manual Approval via Environment)
         run: |
           if [ ! -s tf_dirs.txt ]; then
             echo "No changed Terraform directories found. Skipping apply."

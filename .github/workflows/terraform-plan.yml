@@ -6,7 +6,6 @@ on:
       - main
   workflow_dispatch:
 
-# Environment and permissions defined here (no need to pre-create in UI)
 permissions:
   contents: read
   id-token: write
@@ -81,29 +80,16 @@ jobs:
           name: tf-dirs
           path: tf_dirs.txt
 
-  manual-approval:
-    name: Manual Approval Before Apply
+  terraform-apply:
+    name: Terraform Apply (Requires Approval)
     needs: terraform-init-plan
     runs-on: ubuntu-latest
-    permissions:
-      issues: write
-    steps:
-      - name: Request manual approval
-        uses: trstringer/manual-approval@v1
-        with:
-          approvers: SivaKumarKonduru   # ✅ List of approvers
-          minimum-approvals: 1
-          issue-title: "Terraform Apply Approval Required"
-          issue-body: "Please review the Terraform plan output and approve to proceed with apply."
 
-  terraform-apply:
-    name: Terraform Apply
-    needs: manual-approval
-    runs-on: ubuntu-latest
-
+    # 👇 Built-in approval using GitHub Environments
     environment:
       name: terraform-prod
       url: https://example.com
+
     concurrency:
       group: terraform-apply
       cancel-in-progress: false

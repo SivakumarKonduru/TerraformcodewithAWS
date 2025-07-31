@@ -84,8 +84,11 @@ jobs:
       - name: Manual Approval
         uses: trstringer/manual-approval@v1
         with:
-          reviewers: SivaKumarKonduru  # 👈 GitHub username or team slug
+          approvers: SivaKumarKonduru  # ✅ GitHub usernames
           minimum-approvals: 1
+          issue-title: "Terraform Apply Approval Required"
+          issue-body: "Please review the Terraform plan output and approve to proceed with apply."
+          exclude-workflow-initiator-as-approver: false
         env:
           GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
 

@@ -89,10 +89,8 @@ jobs:
 
   terraform-apply:
     name: Terraform Apply (Requires Approval)
-    needs: terraform-init-plan
+    needs: manual-approval
     runs-on: ubuntu-latest
-    environment:
-      name: terraform-prod
     concurrency:
       group: terraform-apply
       cancel-in-progress: false

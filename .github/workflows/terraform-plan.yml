@@ -83,7 +83,7 @@ jobs:
       - uses: trstringer/manual-approval@v1
         with:
             secret: ${{ github.TOKEN}}
-            approver: SivaKumarKonduru
+            approvers: SivaKumarKonduru
             minimum-approvals: 1
             exclude-workflow-initiator-as-approver: false        
 

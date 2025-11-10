@@ -1,0 +1,86 @@
+name: Container Image Cleanup with Logs
+
+on:
+  workflow_dispatch:
+  schedule:
+    - cron: "0 5 * * *" # Runs daily at 05:00 UTC
+
+permissions:
+  contents: write
+  packages: write
+
+env:
+  MIN_VERSIONS_TO_KEEP_DEV: "30"
+  MIN_VERSIONS_TO_KEEP_PROD: "10"
+  EXCLUDE_TAG: "1.2.4-base"
+
+jobs:
+  retention_policy:
+    name: Cleanup Dev & Prod Container Packages
+    runs-on: ubuntu-latest
+
+    strategy:
+      matrix:
+        package:
+          - "abcd-dev/apache"
+          - "abcd-prod/apache"
+
+    steps:
+      - name: Checkout repo
+        uses: actions/checkout@v4
+
+      - name: Set environment variables
+        run: |
+          echo "PACKAGE=${{ matrix.package }}" >> $GITHUB_ENV
+          if [[ "${{ matrix.package }}" == *"-dev"* ]]; then
+            echo "MIN_VERSIONS=${{ env.MIN_VERSIONS_TO_KEEP_DEV }}" >> $GITHUB_ENV
+          else
+            echo "MIN_VERSIONS=${{ env.MIN_VERSIONS_TO_KEEP_PROD }}" >> $GITHUB_ENV
+          fi
+
+      - name: Install GitHub CLI
+        run: |
+          sudo apt-get update -y
+          sudo apt-get install -y gh
+          gh --version
+
+      - name: Encode package name for API
+        id: encode
+        run: |
+          safe_name=$(echo "${{ matrix.package }}" | sed 's/\//%2F/g')
+          echo "SAFE_NAME=$safe_name" >> $GITHUB_ENV
+
+      - name: Create log directory
+        run: mkdir -p logs
+
+      - name: List versions before cleanup
+        run: |
+          echo "Fetching versions before cleanup for $PACKAGE..."
+          gh api "/orgs/${{ github.repository_owner }}/packages/container/${SAFE_NAME}/versions" \
+            --paginate --jq '.[].metadata.container.tags[0]' \
+            -q '.[]' > "logs/${SAFE_NAME}_before.txt" || echo "No versions found" > "logs/${SAFE_NAME}_before.txt"
+        env:
+          GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+
+      - name: Cleanup old package versions
+        uses: actions/delete-package-versions@v5
+        with:
+          package-name: ${{ env.PACKAGE }}
+          package-type: container
+          min-versions-to-keep: ${{ env.MIN_VERSIONS }}
+          token: ${{ secrets.GITHUB_TOKEN }}
+
+      - name: List versions after cleanup
+        run: |
+          echo "Fetching versions after cleanup for $PACKAGE..."
+          gh api "/orgs/${{ github.repository_owner }}/packages/container/${SAFE_NAME}/versions" \
+            --paginate --jq '.[].metadata.container.tags[0]' \
+            -q '.[]' > "logs/${SAFE_NAME}_after.txt" || echo "No versions found" > "logs/${SAFE_NAME}_after.txt"
+        env:
+          GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+
+      - name: Upload logs as artifact
+        uses: actions/upload-artifact@v4
+        with:
+          name: cleanup-logs
+          path: logs/

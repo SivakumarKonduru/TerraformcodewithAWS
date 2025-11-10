@@ -3,7 +3,7 @@ name: Container Image Cleanup with Logs
 on:
   workflow_dispatch:
   schedule:
-    - cron: "30 7 * * *" # Runs daily at 05:00 UTC
+    - cron: "04 11 * * *" # Runs daily at 05:00 UTC
 
 permissions:
   contents: write

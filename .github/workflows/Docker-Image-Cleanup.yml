@@ -1,57 +1,86 @@
-name: terraform plan
+name: Container Image Cleanup with Logs
 
 on:
-  push:
-    branches: [main]
+  workflow_dispatch:
+  schedule:
+    - cron: "0 5 * * *" # Runs daily at 05:00 UTC
+
+permissions:
+  contents: write
+  packages: write
+
+env:
+  MIN_VERSIONS_TO_KEEP_DEV: "30"
+  MIN_VERSIONS_TO_KEEP_PROD: "10"
+  EXCLUDE_TAG: "1.2.4-base"
 
 jobs:
-  terraform-plan:
-    name: terraform plan
+  retention_policy:
+    name: Cleanup Dev & Prod Container Packages
     runs-on: ubuntu-latest
 
+    strategy:
+      matrix:
+        package:
+          - "abcd-dev/apache"
+          - "abcd-prod/apache"
+
     steps:
-      - name: Checkout repository
-        uses: actions/checkout@v3
+      - name: Checkout repo
+        uses: actions/checkout@v4
 
-      - name: Configure AWS credentials
-        uses: aws-actions/configure-aws-credentials@v2
-        with:
-          aws-access-key-id: ${{ secrets.AWS_ACCESS_KEY_ID }}
-          aws-secret-access-key: ${{ secrets.AWS_SECRET_ACCESS_KEY }}
-          aws-region: ap-south-1  # change as needed
-
-      - name: Setup Terraform
-        uses: hashicorp/setup-terraform@v3
-
-      - name: Find directory of changed Terraform files
-        id: find-dir
+      - name: Set environment variables
         run: |
-          # Find all .tf files changed in the latest commit
-          CHANGED_FILES=$(git diff-tree --no-commit-id --name-only -r ${{ github.sha }} | grep '\.tf$' || true)
+          echo "PACKAGE=${{ matrix.package }}" >> $GITHUB_ENV
+          if [[ "${{ matrix.package }}" == *"-dev"* ]]; then
+            echo "MIN_VERSIONS=${{ env.MIN_VERSIONS_TO_KEEP_DEV }}" >> $GITHUB_ENV
+          else
+            echo "MIN_VERSIONS=${{ env.MIN_VERSIONS_TO_KEEP_PROD }}" >> $GITHUB_ENV
+          fi
 
-          # Extract unique directories (assumes each tf file is in its own customer dir)
-          DIRS=$(echo "$CHANGED_FILES" | xargs -n1 dirname | sort -u)
+      - name: Install GitHub CLI
+        run: |
+          sudo apt-get update -y
+          sudo apt-get install -y gh
+          gh --version
 
-          # For simplicity, assume just one directory was changed
-          DIR=$(echo "$DIRS" | head -n 1)
+      - name: Encode package name for API
+        id: encode
+        run: |
+          safe_name=$(echo "${{ matrix.package }}" | sed 's/\//%2F/g')
+          echo "SAFE_NAME=$safe_name" >> $GITHUB_ENV
 
-          echo "Detected changed directory: $DIR"
-          echo "working_dir=$DIR" >> $GITHUB_OUTPUT
+      - name: Create log directory
+        run: mkdir -p logs
 
-      - name: Terraform Init
-        run: terraform init
-        working-directory: ${{ steps.find-dir.outputs.working_dir }}
+      - name: List versions before cleanup
+        run: |
+          echo "Fetching versions before cleanup for $PACKAGE..."
+          gh api "/orgs/${{ github.repository_owner }}/packages/container/${SAFE_NAME}/versions" \
+            --paginate --jq '.[].metadata.container.tags[0]' \
+            -q '.[]' > "logs/${SAFE_NAME}_before.txt" || echo "No versions found" > "logs/${SAFE_NAME}_before.txt"
+        env:
+          GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
 
-      - name: Terraform Format Check
-        run: terraform fmt -check
-        working-directory: ${{ steps.find-dir.outputs.working_dir }}
+      - name: Cleanup old package versions
+        uses: actions/delete-package-versions@v5
+        with:
+          package-name: ${{ env.PACKAGE }}
+          package-type: container
+          min-versions-to-keep: ${{ env.MIN_VERSIONS }}
+          token: ${{ secrets.GITHUB_TOKEN }}
 
-      - name: Terraform Plan (save to file)
-        run: terraform plan > plan.txt
-        working-directory: ${{ steps.find-dir.outputs.working_dir }}
+      - name: List versions after cleanup
+        run: |
+          echo "Fetching versions after cleanup for $PACKAGE..."
+          gh api "/orgs/${{ github.repository_owner }}/packages/container/${SAFE_NAME}/versions" \
+            --paginate --jq '.[].metadata.container.tags[0]' \
+            -q '.[]' > "logs/${SAFE_NAME}_after.txt" || echo "No versions found" > "logs/${SAFE_NAME}_after.txt"
+        env:
+          GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
 
-      - name: Upload readable plan
+      - name: Upload logs as artifact
         uses: actions/upload-artifact@v4
         with:
-          name: plan-text
-          path: ${{ steps.find-dir.outputs.working_dir }}/plan.txt
+          name: cleanup-logs
+          path: logs/

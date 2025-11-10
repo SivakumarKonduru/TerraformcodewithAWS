@@ -1,10 +1,11 @@
 name: Container Image Cleanup with Logs
 
 on:
+  push:
+    branch:
+    - main
   workflow_dispatch:
-  schedule:
-    - cron: "05 13 * * *" # Runs daily at 05:00 UTC
-
+  
 permissions:
   contents: write
   packages: write
